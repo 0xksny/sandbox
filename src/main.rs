@@ -1,13 +1,16 @@
 use clap::{Args, Parser, Subcommand};
-use std::{fs, io, path::PathBuf};
-
-const NAME: &'static str = "sandbox";
+use std::{fs, io, path::PathBuf, process::Command};
 
 #[derive(Debug, Parser)]
-#[command(name = NAME, version)]
+#[command(name = "sandbox", version)]
 struct Cli {
     #[command(subcommand)]
-    command: Command,
+    command: Commands,
+}
+
+#[derive(Args, Debug, PartialEq)]
+struct AttachArgs {
+    name: String,
 }
 
 #[derive(Args, Debug, PartialEq)]
@@ -23,11 +26,13 @@ struct DeleteArgs {
 }
 
 #[derive(Debug, PartialEq, Subcommand)]
-enum Command {
-    /// Initialize the CLI.
-    Init,
+enum Commands {
+    /// Attach to a sandbox.
+    Attach(AttachArgs),
     /// Create a sandbox.
     Create(CreateArgs),
+    /// Initialize the CLI.
+    Init,
     /// List sandboxes.
     List,
     /// Delete a sandbox.
@@ -37,15 +42,88 @@ enum Command {
 fn main() {
     let cli = Cli::parse();
 
-    if cli.command != Command::Init && !is_init() {
-        panic!("{} is not initialized", NAME)
+    if cli.command != Commands::Init && !is_init() {
+        panic!("sandbox is not initialized")
     }
 
     match cli.command {
-        Command::Init => init().unwrap(),
-        Command::Create(CreateArgs { name }) => create(name),
-        Command::List => list(),
-        Command::Delete(DeleteArgs { name }) => delete(name),
+        Commands::Attach(AttachArgs { name }) => attach(name),
+        Commands::Create(CreateArgs { name }) => create(name),
+        Commands::Delete(DeleteArgs { name }) => delete(name),
+        Commands::Init => init().unwrap(),
+        Commands::List => list(),
+    }
+}
+
+struct Sandbox {
+    name: String,
+}
+
+impl Sandbox {
+    fn new(name: String) -> Self {
+        Sandbox { name }
+    }
+
+    fn path(&self) -> PathBuf {
+        return get_sandbox_dir().join(&self.name);
+    }
+
+    fn exists(&self) -> bool {
+        fs::exists(self.path()).unwrap()
+    }
+
+    fn create(&self) {
+        fs::create_dir(&self.path()).unwrap();
+    }
+
+    fn delete(&self) {
+        fs::remove_dir_all(&self.path()).unwrap();
+    }
+
+    fn session(&self) -> Session<'_> {
+        Session::new(self)
+    }
+}
+
+struct Session<'a> {
+    sandbox: &'a Sandbox,
+}
+
+impl<'a> Session<'a> {
+    fn new(sandbox: &'a Sandbox) -> Self {
+        Session { sandbox }
+    }
+
+    fn exists(&self) -> bool {
+        let target = format!("={}", self.sandbox.name);
+
+        Command::new("tmux")
+            .args(["has-session", "-t", &target])
+            .status()
+            .unwrap()
+            .success()
+    }
+
+    fn create(&self) {
+        Command::new("tmux")
+            .args([
+                "new-session",
+                "-d",
+                "-s",
+                &self.sandbox.name,
+                "-c",
+                self.sandbox.path().to_str().unwrap(),
+                "codex",
+            ])
+            .status()
+            .unwrap();
+    }
+
+    fn attach(&self) {
+        Command::new("tmux")
+            .args(["attach-session", "-t", &self.sandbox.name])
+            .status()
+            .unwrap();
     }
 }
 
@@ -59,8 +137,20 @@ fn is_init() -> bool {
     fs::exists(get_sandbox_dir()).unwrap()
 }
 
-fn init() -> io::Result<()> {
-    fs::create_dir(get_sandbox_dir())
+fn attach(name: String) {
+    let sandbox = Sandbox::new(name);
+
+    if !sandbox.exists() {
+        panic!("sandbox does not exist")
+    }
+
+    let session = sandbox.session();
+
+    if !session.exists() {
+        session.create();
+    }
+
+    session.attach();
 }
 
 fn create(name: Option<String>) {
@@ -69,9 +159,17 @@ fn create(name: Option<String>) {
         None => petname::petname(3, "-").unwrap(),
     };
 
-    fs::create_dir(get_sandbox_dir().join(&name)).unwrap();
+    let sandbox = Sandbox::new(name);
 
-    println!("Created {}", name);
+    if sandbox.exists() {
+        panic!("sandbox already exists")
+    }
+
+    sandbox.create();
+}
+
+fn init() -> io::Result<()> {
+    fs::create_dir(get_sandbox_dir())
 }
 
 fn list() {
@@ -88,5 +186,11 @@ fn list() {
 }
 
 fn delete(name: String) {
-    fs::remove_dir_all(get_sandbox_dir().join(name)).unwrap()
+    let sandbox = Sandbox::new(name);
+
+    if !sandbox.exists() {
+        panic!("sandbox does not exist")
+    }
+
+    sandbox.delete();
 }
