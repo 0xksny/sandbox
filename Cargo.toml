@@ -9,6 +9,8 @@ clap = { version = "4", features = ["derive"] }
 dirs = "6"
 include_dir = "0.7"
 petname = "3"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
 
 [lints.rust]
 unused_must_use = "deny"

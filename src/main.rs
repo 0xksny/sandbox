@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, anyhow};
 use clap::{Args, Parser, Subcommand};
 use include_dir::{Dir, DirEntry, include_dir};
+use serde::Deserialize;
 use std::{
     fs, io,
     path::{Path, PathBuf},
@@ -66,8 +67,16 @@ fn run() -> Result<()> {
         return Err(anyhow!("sandbox is not initialized"));
     }
 
+    let config = match &cli.command {
+        Commands::Init => None,
+        _ => Some(load_config().context("error loading configuration")?),
+    };
+
     match cli.command {
-        Commands::Attach(AttachArgs { name }) => attach(name),
+        Commands::Attach(AttachArgs { name }) => {
+            let config = config.as_ref().context("error converting config to ref")?;
+            attach(name, config)
+        }
         Commands::Create(CreateArgs { name }) => create(name),
         Commands::Delete(DeleteArgs { name }) => delete(name),
         Commands::Init => init(),
@@ -77,6 +86,12 @@ fn run() -> Result<()> {
 
 struct Sandbox {
     name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Config {
+    agent: String,
 }
 
 impl Sandbox {
@@ -137,7 +152,7 @@ impl<'a> Session<'a> {
         Ok(status.success())
     }
 
-    fn create(&self) -> Result<()> {
+    fn create(&self, agent: &str) -> Result<()> {
         let path = self.sandbox.path().context("error getting sandbox path")?;
 
         let path_str = path
@@ -152,7 +167,7 @@ impl<'a> Session<'a> {
                 &self.sandbox.name,
                 "-c",
                 path_str,
-                "codex",
+                agent,
             ])
             .status()
             .context("error creating tmux session")?;
@@ -176,13 +191,24 @@ fn get_sandbox_dir() -> Result<PathBuf> {
     Ok(home.join(".sandbox"))
 }
 
+fn load_config() -> Result<Config> {
+    let sandbox_dir = get_sandbox_dir().context("error getting sandbox directory")?;
+
+    let config_path = sandbox_dir.join("config.toml");
+
+    let contents = fs::read_to_string(&config_path)
+        .context(format!("error reading {}", config_path.display()))?;
+
+    toml::from_str(&contents).context(format!("error parsing {}", config_path.display()))
+}
+
 fn is_init() -> Result<bool> {
     let sandbox_dir = get_sandbox_dir().context("error getting sandbox directory")?;
 
     fs::exists(sandbox_dir).context("error checking if sandbox directory exists")
 }
 
-fn attach(name: String) -> Result<()> {
+fn attach(name: String, config: &Config) -> Result<()> {
     let sandbox = Sandbox::new(name);
 
     if !sandbox.exists()? {
@@ -196,7 +222,9 @@ fn attach(name: String) -> Result<()> {
         .context("error checking if session exists")?;
 
     if !exists {
-        session.create().context("error creating session")?;
+        session
+            .create(&config.agent)
+            .context("error creating session")?;
     }
 
     session.attach().context("error attaching to session")
