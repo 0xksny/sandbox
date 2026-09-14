@@ -1,5 +1,12 @@
 use clap::{Args, Parser, Subcommand};
-use std::{fs, io, path::PathBuf, process::Command};
+use include_dir::{Dir, DirEntry, include_dir};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+    process::Command,
+};
+
+static ASSETS: Dir = include_dir!("$CARGO_MANIFEST_DIR/assets");
 
 #[derive(Debug, Parser)]
 #[command(name = "sandbox", version)]
@@ -65,7 +72,7 @@ impl Sandbox {
     }
 
     fn path(&self) -> PathBuf {
-        return get_sandbox_dir().join(&self.name);
+        return get_sandbox_dir().join("sandboxes").join(&self.name);
     }
 
     fn exists(&self) -> bool {
@@ -74,6 +81,11 @@ impl Sandbox {
 
     fn create(&self) {
         fs::create_dir(&self.path()).unwrap();
+        copy_dir_all(
+            get_sandbox_dir().join("templates").join("default"),
+            &self.path(),
+        )
+        .unwrap();
     }
 
     fn delete(&self) {
@@ -169,11 +181,64 @@ fn create(name: Option<String>) {
 }
 
 fn init() -> io::Result<()> {
-    fs::create_dir(get_sandbox_dir())
+    let sandbox_dir = get_sandbox_dir();
+
+    fs::create_dir(&sandbox_dir)?;
+
+    let assets = ASSETS.get_dir(".sandbox").unwrap();
+
+    copy_embedded_dir_all(assets, &sandbox_dir)
+}
+
+fn copy_embedded_dir_all(source: &Dir<'_>, destination: &PathBuf) -> io::Result<()> {
+    for entry in source.entries() {
+        let relative_path = entry.path().strip_prefix(source.path()).unwrap();
+        let destination_path = destination.join(relative_path);
+
+        match entry {
+            DirEntry::Dir(directory) => {
+                fs::create_dir_all(&destination_path)?;
+                copy_embedded_dir_all(directory, &destination_path)?;
+            }
+            DirEntry::File(file) => {
+                if destination_path
+                    .file_name()
+                    .is_some_and(|file_name| file_name == ".gitkeep")
+                {
+                    continue;
+                }
+
+                fs::write(destination_path, file.contents())?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn copy_dir_all(source: impl AsRef<Path>, destination: impl AsRef<Path>) -> io::Result<()> {
+    let source = source.as_ref();
+    let destination = destination.as_ref();
+
+    fs::create_dir_all(destination)?;
+
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let destination_path = destination.join(entry.file_name());
+
+        if file_type.is_dir() {
+            copy_dir_all(entry.path(), destination_path)?;
+        } else {
+            fs::copy(entry.path(), destination_path)?;
+        }
+    }
+
+    Ok(())
 }
 
 fn list() {
-    let mut items: Vec<String> = fs::read_dir(get_sandbox_dir())
+    let mut items: Vec<String> = fs::read_dir(get_sandbox_dir().join("sandboxes"))
         .unwrap()
         .map(|item| item.unwrap().file_name().into_string().unwrap())
         .collect();
