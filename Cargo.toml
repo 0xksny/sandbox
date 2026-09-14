@@ -4,7 +4,16 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 dirs = "6"
 include_dir = "0.7"
 petname = "3"
+
+[lints.rust]
+unused_must_use = "deny"
+
+[lints.clippy]
+panic = "deny"
+unwrap_used = "deny"
+expect_used = "deny"

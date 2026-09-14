@@ -1,9 +1,10 @@
+use anyhow::{Context, Result, anyhow};
 use clap::{Args, Parser, Subcommand};
 use include_dir::{Dir, DirEntry, include_dir};
 use std::{
     fs, io,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, ExitCode},
 };
 
 static ASSETS: Dir = include_dir!("$CARGO_MANIFEST_DIR/assets");
@@ -46,18 +47,30 @@ enum Commands {
     Delete(DeleteArgs),
 }
 
-fn main() {
+fn main() -> ExitCode {
+    match run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("error: {}", error);
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run() -> Result<()> {
     let cli = Cli::parse();
 
-    if cli.command != Commands::Init && !is_init() {
-        panic!("sandbox is not initialized")
+    let is_init = is_init().context("error checking if sandbox is initialized")?;
+
+    if cli.command != Commands::Init && !is_init {
+        return Err(anyhow!("sandbox is not initialized"));
     }
 
     match cli.command {
         Commands::Attach(AttachArgs { name }) => attach(name),
         Commands::Create(CreateArgs { name }) => create(name),
         Commands::Delete(DeleteArgs { name }) => delete(name),
-        Commands::Init => init().unwrap(),
+        Commands::Init => init(),
         Commands::List => list(),
     }
 }
@@ -71,25 +84,32 @@ impl Sandbox {
         Sandbox { name }
     }
 
-    fn path(&self) -> PathBuf {
-        return get_sandbox_dir().join("sandboxes").join(&self.name);
+    fn path(&self) -> Result<PathBuf> {
+        let sandbox_dir = get_sandbox_dir().context("error getting sandbox directory")?;
+
+        Ok(sandbox_dir.join("sandboxes").join(&self.name))
     }
 
-    fn exists(&self) -> bool {
-        fs::exists(self.path()).unwrap()
+    fn exists(&self) -> Result<bool> {
+        let path = self.path().context("error getting sandbox path")?;
+
+        fs::exists(path).context("error checking if sandbox path exists")
     }
 
-    fn create(&self) {
-        fs::create_dir(&self.path()).unwrap();
-        copy_dir_all(
-            get_sandbox_dir().join("templates").join("default"),
-            &self.path(),
-        )
-        .unwrap();
+    fn create(&self) -> Result<()> {
+        let sandbox_dir = get_sandbox_dir().context("error getting sandbox directory")?;
+        let path = self.path().context("error getting sandbox path")?;
+
+        fs::create_dir(&path).context("error creating sandbox directory")?;
+
+        copy_dir_all(sandbox_dir.join("templates").join("default"), path)
+            .context("error copying template to sandbox")
     }
 
-    fn delete(&self) {
-        fs::remove_dir_all(&self.path()).unwrap();
+    fn delete(&self) -> Result<()> {
+        let path = self.path().context("error getting sandbox path")?;
+
+        fs::remove_dir_all(path).context("error removing sandbox directory")
     }
 
     fn session(&self) -> Session<'_> {
@@ -106,17 +126,24 @@ impl<'a> Session<'a> {
         Session { sandbox }
     }
 
-    fn exists(&self) -> bool {
+    fn exists(&self) -> Result<bool> {
         let target = format!("={}", self.sandbox.name);
 
-        Command::new("tmux")
+        let status = Command::new("tmux")
             .args(["has-session", "-t", &target])
             .status()
-            .unwrap()
-            .success()
+            .context("error checking if tmux session exists")?;
+
+        Ok(status.success())
     }
 
-    fn create(&self) {
+    fn create(&self) -> Result<()> {
+        let path = self.sandbox.path().context("error getting sandbox path")?;
+
+        let path_str = path
+            .to_str()
+            .context("error converting sandbox path to string")?;
+
         Command::new("tmux")
             .args([
                 "new-session",
@@ -124,75 +151,91 @@ impl<'a> Session<'a> {
                 "-s",
                 &self.sandbox.name,
                 "-c",
-                self.sandbox.path().to_str().unwrap(),
+                path_str,
                 "codex",
             ])
             .status()
-            .unwrap();
+            .context("error creating tmux session")?;
+
+        Ok(())
     }
 
-    fn attach(&self) {
+    fn attach(&self) -> Result<()> {
         Command::new("tmux")
             .args(["attach-session", "-t", &self.sandbox.name])
             .status()
-            .unwrap();
+            .context("error attaching to tmux session")?;
+
+        Ok(())
     }
 }
 
-fn get_sandbox_dir() -> PathBuf {
-    let home = dirs::home_dir().map(PathBuf::from).unwrap();
+fn get_sandbox_dir() -> Result<PathBuf> {
+    let home = dirs::home_dir().context("error getting home directory")?;
 
-    home.join(".sandbox")
+    Ok(home.join(".sandbox"))
 }
 
-fn is_init() -> bool {
-    fs::exists(get_sandbox_dir()).unwrap()
+fn is_init() -> Result<bool> {
+    let sandbox_dir = get_sandbox_dir().context("error getting sandbox directory")?;
+
+    fs::exists(sandbox_dir).context("error checking if sandbox directory exists")
 }
 
-fn attach(name: String) {
+fn attach(name: String) -> Result<()> {
     let sandbox = Sandbox::new(name);
 
-    if !sandbox.exists() {
-        panic!("sandbox does not exist")
+    if !sandbox.exists()? {
+        return Err(anyhow!("sandbox does not exist"));
     }
 
     let session = sandbox.session();
 
-    if !session.exists() {
-        session.create();
+    let exists = session
+        .exists()
+        .context("error checking if session exists")?;
+
+    if !exists {
+        session.create().context("error creating session")?;
     }
 
-    session.attach();
+    session.attach().context("error attaching to session")
 }
 
-fn create(name: Option<String>) {
+fn create(name: Option<String>) -> Result<()> {
     let name = match name {
         Some(name) => name,
-        None => petname::petname(3, "-").unwrap(),
+        None => petname::petname(3, "-").context("petname did not generate a name")?,
     };
 
     let sandbox = Sandbox::new(name);
 
-    if sandbox.exists() {
-        panic!("sandbox already exists")
+    if sandbox.exists()? {
+        return Err(anyhow!("sandbox already exists"));
     }
 
-    sandbox.create();
+    sandbox.create().context("error creating sandbox")
 }
 
-fn init() -> io::Result<()> {
-    let sandbox_dir = get_sandbox_dir();
+fn init() -> Result<()> {
+    let sandbox_dir = get_sandbox_dir().context("error getting sandbox directory")?;
 
-    fs::create_dir(&sandbox_dir)?;
+    fs::create_dir(&sandbox_dir).context("error creating sandbox directory")?;
 
-    let assets = ASSETS.get_dir(".sandbox").unwrap();
+    let assets = ASSETS
+        .get_dir(".sandbox")
+        .context("error getting .sandbox directory from assets")?;
 
     copy_embedded_dir_all(assets, &sandbox_dir)
+        .context("error copying embedded directory to sandbox directory")
 }
 
-fn copy_embedded_dir_all(source: &Dir<'_>, destination: &PathBuf) -> io::Result<()> {
+fn copy_embedded_dir_all(source: &Dir<'_>, destination: &Path) -> Result<()> {
     for entry in source.entries() {
-        let relative_path = entry.path().strip_prefix(source.path()).unwrap();
+        let relative_path = entry
+            .path()
+            .strip_prefix(source.path())
+            .context("error stripping prefix from source entry path")?;
         let destination_path = destination.join(relative_path);
 
         match entry {
@@ -237,25 +280,38 @@ fn copy_dir_all(source: impl AsRef<Path>, destination: impl AsRef<Path>) -> io::
     Ok(())
 }
 
-fn list() {
-    let mut items: Vec<String> = fs::read_dir(get_sandbox_dir().join("sandboxes"))
-        .unwrap()
-        .map(|item| item.unwrap().file_name().into_string().unwrap())
-        .collect();
+fn list() -> Result<()> {
+    let sandbox_dir = get_sandbox_dir().context("error getting sandbox directory")?;
+
+    let read_dir_result =
+        fs::read_dir(sandbox_dir.join("sandboxes")).context("error reading sandboxes directory")?;
+
+    let mut items: Vec<String> = read_dir_result
+        .map(|item| -> Result<String> {
+            let entry = item.context("error getting sandboxes directory entry")?;
+
+            entry
+                .file_name()
+                .into_string()
+                .map_err(|error| anyhow!("error converting file name to string: {:?}", error))
+        })
+        .collect::<Result<_>>()?;
 
     items.sort();
 
     for item in items {
         println!("{}", item)
     }
+
+    Ok(())
 }
 
-fn delete(name: String) {
+fn delete(name: String) -> Result<()> {
     let sandbox = Sandbox::new(name);
 
-    if !sandbox.exists() {
-        panic!("sandbox does not exist")
+    if !sandbox.exists()? {
+        return Err(anyhow!("sandbox does not exist"));
     }
 
-    sandbox.delete();
+    sandbox.delete().context("error deleting sandbox")
 }
