@@ -77,7 +77,10 @@ fn run() -> Result<()> {
             let config = config.as_ref().context("error converting config to ref")?;
             attach(name, config)
         }
-        Commands::Create(CreateArgs { name }) => create(name),
+        Commands::Create(CreateArgs { name }) => {
+            let config = config.as_ref().context("error converting config to ref")?;
+            create(name, config)
+        }
         Commands::Delete(DeleteArgs { name }) => delete(name),
         Commands::Init => init(),
         Commands::List => list(),
@@ -92,6 +95,7 @@ struct Sandbox {
 #[serde(deny_unknown_fields)]
 struct Config {
     agent: String,
+    template: String,
 }
 
 impl Sandbox {
@@ -111,13 +115,13 @@ impl Sandbox {
         fs::exists(path).context("error checking if sandbox path exists")
     }
 
-    fn create(&self) -> Result<()> {
+    fn create(&self, template: &str) -> Result<()> {
         let sandbox_dir = get_sandbox_dir().context("error getting sandbox directory")?;
         let path = self.path().context("error getting sandbox path")?;
 
         fs::create_dir(&path).context("error creating sandbox directory")?;
 
-        copy_dir_all(sandbox_dir.join("templates").join("default"), path)
+        copy_dir_all(sandbox_dir.join("templates").join(template), path)
             .context("error copying template to sandbox")
     }
 
@@ -230,7 +234,7 @@ fn attach(name: String, config: &Config) -> Result<()> {
     session.attach().context("error attaching to session")
 }
 
-fn create(name: Option<String>) -> Result<()> {
+fn create(name: Option<String>, config: &Config) -> Result<()> {
     let name = match name {
         Some(name) => name,
         None => petname::petname(3, "-").context("petname did not generate a name")?,
@@ -242,7 +246,9 @@ fn create(name: Option<String>) -> Result<()> {
         return Err(anyhow!("sandbox already exists"));
     }
 
-    sandbox.create().context("error creating sandbox")
+    sandbox
+        .create(&config.template)
+        .context("error creating sandbox")
 }
 
 fn init() -> Result<()> {
