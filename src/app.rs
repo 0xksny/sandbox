@@ -36,8 +36,8 @@ impl App {
         toml::from_str(&contents).context(format!("error parsing {}", config_path.display()))
     }
 
-    fn attach(&self, name: String, config: &Config) -> Result<()> {
-        let sandbox = Sandbox::new(self.sandbox_dir.clone(), name);
+    fn attach(&self, args: AttachArgs, config: Config) -> Result<()> {
+        let sandbox = Sandbox::new(self.sandbox_dir.clone(), args.name);
 
         if !sandbox.exists()? {
             return Err(anyhow!("sandbox does not exist"));
@@ -58,8 +58,8 @@ impl App {
         session.attach().context("error attaching to session")
     }
 
-    fn create(&self, name: Option<String>, config: &Config) -> Result<()> {
-        let name = match name {
+    fn create(&self, args: CreateArgs, config: Config) -> Result<()> {
+        let name = match args.name {
             Some(name) => name,
             None => petname::petname(3, "-").context("petname did not generate a name")?,
         };
@@ -75,8 +75,8 @@ impl App {
             .context("error creating sandbox")
     }
 
-    fn delete(&self, name: String) -> Result<()> {
-        let sandbox = Sandbox::new(self.sandbox_dir.clone(), name);
+    fn delete(&self, args: DeleteArgs) -> Result<()> {
+        let sandbox = Sandbox::new(self.sandbox_dir.clone(), args.name);
 
         if !sandbox.exists()? {
             return Err(anyhow!("sandbox does not exist"));
@@ -121,7 +121,7 @@ impl App {
     }
 
     pub fn run(self) -> Result<()> {
-        if matches!(&self.command, Commands::Init) {
+        if matches!(self.command, Commands::Init) {
             return self.init();
         }
 
@@ -136,9 +136,9 @@ impl App {
         let config = self.load_config().context("error loading configuration")?;
 
         match &self.command {
-            Commands::Attach(AttachArgs { name }) => self.attach(name.clone(), &config),
-            Commands::Create(CreateArgs { name }) => self.create(name.clone(), &config),
-            Commands::Delete(DeleteArgs { name }) => self.delete(name.clone()),
+            Commands::Attach(args) => self.attach(args.clone(), config),
+            Commands::Create(args) => self.create(args.clone(), config),
+            Commands::Delete(args) => self.delete(args.clone()),
             Commands::List => self.list(),
             Commands::Init => unreachable!(),
         }

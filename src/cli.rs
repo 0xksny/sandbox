@@ -22,18 +22,18 @@ impl Cli {
     }
 }
 
-#[derive(Args, Debug, PartialEq)]
+#[derive(Args, Clone, Debug, PartialEq)]
 pub struct AttachArgs {
     pub name: String,
 }
 
-#[derive(Args, Debug, PartialEq)]
+#[derive(Args, Clone, Debug, PartialEq)]
 pub struct CreateArgs {
     /// The name of the sandbox to delete.
     pub name: Option<String>,
 }
 
-#[derive(Args, Debug, PartialEq)]
+#[derive(Args, Clone, Debug, PartialEq)]
 pub struct DeleteArgs {
     /// The name of the sandbox to delete.
     pub name: String,
