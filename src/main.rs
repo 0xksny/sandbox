@@ -52,7 +52,7 @@ fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("error: {}", error);
+            eprintln!("error: {:#}", error);
             ExitCode::FAILURE
         }
     }
