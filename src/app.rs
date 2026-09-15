@@ -121,31 +121,26 @@ impl App {
     }
 
     pub fn run(self) -> Result<()> {
+        if matches!(&self.command, Commands::Init) {
+            return self.init();
+        }
+
         let is_init = self
             .is_init()
             .context("error checking if sandbox is initialized")?;
 
-        if self.command != Commands::Init && !is_init {
+        if !is_init {
             return Err(anyhow!("sandbox is not initialized"));
         }
 
-        let config = match &self.command {
-            Commands::Init => None,
-            _ => Some(self.load_config().context("error loading configuration")?),
-        };
+        let config = self.load_config().context("error loading configuration")?;
 
         match &self.command {
-            Commands::Attach(AttachArgs { name }) => {
-                let config = config.as_ref().context("error converting config to ref")?;
-                self.attach(name.clone(), config)
-            }
-            Commands::Create(CreateArgs { name }) => {
-                let config = config.as_ref().context("error converting config to ref")?;
-                self.create(name.clone(), config)
-            }
+            Commands::Attach(AttachArgs { name }) => self.attach(name.clone(), &config),
+            Commands::Create(CreateArgs { name }) => self.create(name.clone(), &config),
             Commands::Delete(DeleteArgs { name }) => self.delete(name.clone()),
-            Commands::Init => self.init(),
             Commands::List => self.list(),
+            Commands::Init => unreachable!(),
         }
     }
 }
