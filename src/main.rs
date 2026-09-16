@@ -1,7 +1,7 @@
-mod app;
 mod assets;
 mod cli;
 mod config;
+mod herdr;
 mod sandbox;
 mod session;
 
