@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, process::Command};
 
 use anyhow::{Context, Result};
 
@@ -39,6 +39,21 @@ impl Sandbox {
         let path = self.path();
 
         fs::remove_dir_all(path).context("error removing sandbox directory")
+    }
+
+    pub fn open(&self) -> Result<()> {
+        let path = self.path();
+
+        let path_str = path
+            .to_str()
+            .context("error converting sandbox path to string")?;
+
+        Command::new("zed")
+            .args(["-e", path_str])
+            .status()
+            .context("error running zed")?;
+
+        Ok(())
     }
 
     pub fn session(&self) -> Session {

@@ -14,6 +14,7 @@ mod delete;
 mod herdr;
 mod init;
 mod list;
+mod open;
 
 pub use attach::AttachCommand;
 pub use create::CreateCommand;
@@ -21,6 +22,7 @@ pub use delete::DeleteCommand;
 pub use herdr::HerdrCommand;
 pub use init::InitCommand;
 pub use list::ListCommand;
+pub use open::OpenCommand;
 
 #[derive(Debug, Parser)]
 #[command(name = "sandbox", version)]
@@ -54,6 +56,7 @@ impl Cli {
             Commands::Delete(command) => command.run(sandbox_dir),
             Commands::Herdr(command) => command.run(),
             Commands::List(command) => command.run(sandbox_dir),
+            Commands::Open(command) => command.run(sandbox_dir),
             Commands::Init(_) => unreachable!(),
         }
     }
@@ -92,4 +95,6 @@ pub enum Commands {
     Init(InitCommand),
     /// List sandboxes.
     List(ListCommand),
+    /// Open a sandbox.
+    Open(OpenCommand),
 }
