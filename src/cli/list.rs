@@ -11,14 +11,26 @@ impl ListCommand {
         let read_dir_result = fs::read_dir(sandbox_dir.join("sandboxes"))
             .context("error reading sandboxes directory")?;
         let mut items: Vec<String> = read_dir_result
-            .map(|item| -> Result<String> {
+            .map(|item| -> Result<Option<String>> {
                 let entry = item.context("error getting sandboxes directory entry")?;
-                entry
-                    .file_name()
-                    .into_string()
-                    .map_err(|error| anyhow!("error converting file name to string: {:?}", error))
+
+                let entry_file_type = entry
+                    .file_type()
+                    .context("error getting sandbox entry file type")?;
+                if !entry_file_type.is_dir() {
+                    return Ok(None);
+                }
+
+                let entry_file_name = entry.file_name().into_string().map_err(|error| {
+                    anyhow!("error converting file name to string: {:?}", error)
+                })?;
+
+                Ok(Some(entry_file_name))
             })
-            .collect::<Result<_>>()?;
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .flatten()
+            .collect();
 
         items.sort();
         for item in items {
