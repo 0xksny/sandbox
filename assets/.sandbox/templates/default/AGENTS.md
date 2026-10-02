@@ -36,6 +36,10 @@ git worktree add "${sandbox}/code/github.com/my-org/my-repo"
 cd "${sandbox}"
 ```
 
+If the main worktree does not exist, create it by performing a clone in the `code` directory of the user's home directory, then proceed with creating the linked worktree.
+
+If you encounter any permission errors writing to a folder outside of the sandbox directory, you can fall back to a clone inside the sandbox.
+
 # Temporary files
 
 All temporary files should go in the `tmp` folder.
