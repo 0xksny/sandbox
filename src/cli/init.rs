@@ -10,7 +10,10 @@ pub struct InitCommand {}
 
 impl InitCommand {
     pub fn run(self, sandbox_dir: PathBuf) -> Result<()> {
-        std::fs::create_dir(&sandbox_dir).context("error creating sandbox directory")?;
+        if !sandbox_dir.exists() {
+            std::fs::create_dir(&sandbox_dir).context("error creating sandbox directory")?;
+        }
+
         let assets = ASSETS
             .get_dir(".sandbox")
             .context("error getting .sandbox directory from assets")?;
