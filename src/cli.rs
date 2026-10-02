@@ -15,6 +15,7 @@ mod herdr;
 mod init;
 mod list;
 mod open;
+mod view;
 
 pub use attach::AttachCommand;
 pub use create::CreateCommand;
@@ -23,6 +24,7 @@ pub use herdr::HerdrCommand;
 pub use init::InitCommand;
 pub use list::ListCommand;
 pub use open::OpenCommand;
+pub use view::ViewCommand;
 
 #[derive(Debug, Parser)]
 #[command(name = "sandbox", version)]
@@ -57,6 +59,7 @@ impl Cli {
             Commands::Herdr(command) => command.run(),
             Commands::List(command) => command.run(sandbox_dir),
             Commands::Open(command) => command.run(sandbox_dir),
+            Commands::View(command) => command.run(),
             Commands::Init(_) => unreachable!(),
         }
     }
@@ -97,4 +100,6 @@ pub enum Commands {
     List(ListCommand),
     /// Open a sandbox.
     Open(OpenCommand),
+    /// View the TUI.
+    View(ViewCommand),
 }
