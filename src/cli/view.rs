@@ -12,6 +12,8 @@ use ratatui::{
 };
 use tui_term::{vt100, widget::PseudoTerminal};
 
+use crate::herdr::Herdr;
+
 #[derive(Args, Clone, Debug, PartialEq)]
 pub struct ViewCommand {}
 
@@ -27,6 +29,19 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
 }
 
 fn run_app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
+    let workspaces = Arc::new(RwLock::new(Herdr::new()
+        .list_workspaces()
+        .map_err(std::io::Error::other)?));
+    let workspace_refresh = workspaces.clone();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_secs(1));
+        if let Ok(updated) = Herdr::new().list_workspaces()
+            && let Ok(mut current) = workspace_refresh.write()
+        {
+            *current = updated;
+        }
+    });
+    
     let mut stdout = std::io::stdout();
     let size = terminal.size()?;
     let pty = NativePtySystem::default().openpty(PtySize {
@@ -64,7 +79,7 @@ fn run_app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                 stdout.execute(EnableMouseCapture)?;
             }
         }
-        terminal.draw(|frame| render(frame, &parser))?;
+        terminal.draw(|frame| render(frame, &parser, &workspaces))?;
         if crossterm::event::poll(Duration::from_millis(30))? {
             match crossterm::event::read()? {
                 crossterm::event::Event::Key(key) if key.is_press() => {
@@ -135,7 +150,11 @@ fn mouse_button(button: MouseButton) -> u8 {
     match button { MouseButton::Left => 0, MouseButton::Middle => 1, MouseButton::Right => 2 }
 }
 
-fn render(frame: &mut Frame, parser: &Arc<RwLock<vt100::Parser>>) {
+fn render(
+    frame: &mut Frame,
+    parser: &Arc<RwLock<vt100::Parser>>,
+    workspaces: &Arc<RwLock<Vec<String>>>,
+) {
     let layout = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(30), Constraint::Fill(1)])
@@ -155,18 +174,13 @@ fn render(frame: &mut Frame, parser: &Arc<RwLock<vt100::Parser>>) {
 
     let block_tasks_inner = block_tasks.inner(layout[0]);
 
-    let block_tasks_rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-        ])
-        .split(block_tasks_inner);
-
-    frame.render_widget(Paragraph::new("* foo"), block_tasks_rows[0]);
-    frame.render_widget(Paragraph::new("+ bar"), block_tasks_rows[1]);
-    frame.render_widget(Paragraph::new("= baz"), block_tasks_rows[2]);
+    if let Ok(workspaces) = workspaces.read() {
+        let workspace_lines = workspaces
+            .iter()
+            .map(|workspace| format!("• {workspace}"))
+            .collect::<Vec<_>>();
+        frame.render_widget(Paragraph::new(workspace_lines.join("\n")), block_tasks_inner);
+    }
 
     let block_terminal_inner = block_terminal.inner(layout[1]);
 
