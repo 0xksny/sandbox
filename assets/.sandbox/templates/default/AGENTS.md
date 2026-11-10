@@ -38,6 +38,10 @@ cd "${sandbox}"
 
 If the main worktree does not exist, create it by performing a clone in the `code` directory of the user's home directory, then proceed with creating the linked worktree.
 
+Always pull the latest default branch of the main worktree before create a new worktree from it. Same goes for creating a new branch off of the default branch.
+
+Do not commit changes, push changes, create pull requests, or perform anything other than read-only actions on the remote version control system unless explicitly told to do so by the user.
+
 If you encounter any permission errors writing to a folder outside of the sandbox directory, you can fall back to a clone inside the sandbox.
 
 # Temporary files
