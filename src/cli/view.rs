@@ -9,7 +9,10 @@ use anyhow::{Context, Result};
 use clap::Args;
 use crossterm::{
     ExecutableCommand,
-    event::{DisableMouseCapture, EnableMouseCapture, MouseButton, MouseEvent, MouseEventKind},
+    event::{
+        DisableMouseCapture, EnableMouseCapture, KeyCode, KeyModifiers, MouseButton, MouseEvent,
+        MouseEventKind,
+    },
 };
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 use ratatui::layout::Rect;
@@ -34,6 +37,133 @@ impl ViewCommand {
 
 fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
     run_app(terminal)
+}
+
+fn terminal_pane(area: Rect) -> Rect {
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(30), Constraint::Fill(1)])
+        .split(area)[1]
+}
+
+fn terminal_pane_inner(area: Rect) -> Rect {
+    let pane = terminal_pane(area);
+    Rect::new(
+        pane.x + 1,
+        pane.y + 1,
+        pane.width.saturating_sub(2),
+        pane.height.saturating_sub(2),
+    )
+}
+
+fn encode_key(code: KeyCode, modifiers: KeyModifiers) -> Option<Vec<u8>> {
+    let bytes = match code {
+        KeyCode::Enter => b"\r".to_vec(),
+        KeyCode::Backspace => b"\x7f".to_vec(),
+        KeyCode::Tab => b"\t".to_vec(),
+        KeyCode::BackTab => b"\x1b[Z".to_vec(),
+        KeyCode::Up => b"\x1b[A".to_vec(),
+        KeyCode::Down => b"\x1b[B".to_vec(),
+        KeyCode::Right => b"\x1b[C".to_vec(),
+        KeyCode::Left => b"\x1b[D".to_vec(),
+        KeyCode::Home => b"\x1b[H".to_vec(),
+        KeyCode::End => b"\x1b[F".to_vec(),
+        KeyCode::PageUp => b"\x1b[5~".to_vec(),
+        KeyCode::PageDown => b"\x1b[6~".to_vec(),
+        KeyCode::Insert => b"\x1b[2~".to_vec(),
+        KeyCode::Delete => b"\x1b[3~".to_vec(),
+        KeyCode::F(n @ 1..=4) => format!("\x1b[1;{}P", n).into_bytes(),
+        KeyCode::F(n @ 5..=12) => format!("\x1b[{}~", 15 + (n - 5) * 2).into_bytes(),
+        KeyCode::F(_) => return None,
+        KeyCode::Char(c) if modifiers.contains(KeyModifiers::CONTROL) => vec![control_byte(c)?],
+        KeyCode::Char(c) => {
+            let mut buf = [0; 4];
+            c.encode_utf8(&mut buf).as_bytes().to_vec()
+        }
+        KeyCode::Null => vec![0],
+        _ => return None,
+    };
+    if modifiers.contains(KeyModifiers::ALT) {
+        let mut out = vec![0x1b];
+        out.extend(bytes);
+        Some(out)
+    } else {
+        Some(bytes)
+    }
+}
+
+fn control_byte(c: char) -> Option<u8> {
+    match c {
+        'a'..='z' => Some(c as u8 - b'a' + 1),
+        'A'..='Z' => Some(c as u8 - b'A' + 1),
+        '@' | ' ' | '2' => Some(0),
+        '[' | '3' => Some(0x1b),
+        '\\' | '4' => Some(0x1c),
+        ']' | '5' => Some(0x1d),
+        '^' | '6' => Some(0x1e),
+        '_' | '7' | '/' => Some(0x1f),
+        '?' | '8' => Some(0x7f),
+        _ => None,
+    }
+}
+
+fn write_mouse(
+    writer: &mut impl Write,
+    mouse: MouseEvent,
+    x: u16,
+    y: u16,
+    mode: vt100::MouseProtocolMode,
+) -> std::io::Result<()> {
+    let allowed = match mouse.kind {
+        MouseEventKind::Down(_)
+        | MouseEventKind::ScrollUp
+        | MouseEventKind::ScrollDown
+        | MouseEventKind::ScrollLeft
+        | MouseEventKind::ScrollRight => true,
+        MouseEventKind::Up(_) => matches!(
+            mode,
+            vt100::MouseProtocolMode::PressRelease
+                | vt100::MouseProtocolMode::ButtonMotion
+                | vt100::MouseProtocolMode::AnyMotion
+        ),
+        MouseEventKind::Drag(_) => matches!(
+            mode,
+            vt100::MouseProtocolMode::ButtonMotion | vt100::MouseProtocolMode::AnyMotion
+        ),
+        MouseEventKind::Moved => mode == vt100::MouseProtocolMode::AnyMotion,
+    };
+    if !allowed {
+        return Ok(());
+    }
+    let (button, release) = match mouse.kind {
+        MouseEventKind::Down(b) => (mouse_button(b), false),
+        MouseEventKind::Up(b) => (mouse_button(b), true),
+        MouseEventKind::Drag(b) => (mouse_button(b) | 32, false),
+        MouseEventKind::Moved => (35, false),
+        MouseEventKind::ScrollUp => (64, false),
+        MouseEventKind::ScrollDown => (65, false),
+        MouseEventKind::ScrollLeft => (66, false),
+        MouseEventKind::ScrollRight => (67, false),
+    };
+    let modifier = (u8::from(mouse.modifiers.contains(KeyModifiers::SHIFT)) * 4)
+        | (u8::from(mouse.modifiers.contains(KeyModifiers::ALT)) * 8)
+        | (u8::from(mouse.modifiers.contains(KeyModifiers::CONTROL)) * 16);
+    write!(
+        writer,
+        "\x1b[<{};{};{}{}",
+        button + modifier,
+        x + 1,
+        y + 1,
+        if release { 'm' } else { 'M' }
+    )
+}
+
+fn mouse_button(button: MouseButton) -> u8 {
+    match button {
+        MouseButton::Left => 0,
+        MouseButton::Middle => 1,
+        MouseButton::Right => 2,
+    }
 }
 
 fn run_app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
@@ -129,39 +259,16 @@ fn run_app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
         if crossterm::event::poll(Duration::from_millis(30))? {
             match crossterm::event::read()? {
                 crossterm::event::Event::Key(key) if key.is_press() => {
-                    use crossterm::event::KeyCode;
                     if key.code == KeyCode::Esc {
                         break;
                     }
-                    let bytes: &[u8] = match key.code {
-                        KeyCode::Enter => b"\r",
-                        KeyCode::Backspace => b"\x7f",
-                        KeyCode::Tab => b"\t",
-                        KeyCode::Up => b"\x1b[A",
-                        KeyCode::Down => b"\x1b[B",
-                        KeyCode::Right => b"\x1b[C",
-                        KeyCode::Left => b"\x1b[D",
-                        KeyCode::Char(c) => {
-                            let mut s = [0; 4];
-                            writer.write_all(c.encode_utf8(&mut s).as_bytes())?;
-                            continue;
-                        }
-                        _ => continue,
-                    };
-                    writer.write_all(bytes)?;
+                    if let Some(bytes) = encode_key(key.code, key.modifiers) {
+                        writer.write_all(&bytes)?;
+                    }
                 }
                 crossterm::event::Event::Resize(cols, rows) => {
                     let area = Rect::new(0, 0, cols, rows);
-                    let inner = Layout::default()
-                        .direction(Direction::Horizontal)
-                        .constraints([Constraint::Length(30), Constraint::Fill(1)])
-                        .split(area)[1];
-                    let inner = Rect::new(
-                        inner.x + 1,
-                        inner.y + 1,
-                        inner.width.saturating_sub(2),
-                        inner.height.saturating_sub(2),
-                    );
+                    let inner = terminal_pane(area);
                     pty.master
                         .resize(PtySize {
                             rows: inner.height,
@@ -175,104 +282,33 @@ fn run_app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                     }
                 }
                 crossterm::event::Event::Mouse(mouse) => {
-                    if mouse_mode == vt100::MouseProtocolMode::None {
-                        continue;
-                    }
                     let size = terminal.size()?;
-                    let area = Rect::new(0, 0, size.width, size.height);
-                    let pane = Layout::default()
-                        .direction(Direction::Horizontal)
-                        .constraints([Constraint::Length(30), Constraint::Fill(1)])
-                        .split(area)[1];
-                    let x = mouse.column.saturating_sub(pane.x.saturating_add(1));
-                    let y = mouse.row.saturating_sub(pane.y.saturating_add(1));
-                    if mouse.column > pane.x
-                        && mouse.column < pane.x + pane.width.saturating_sub(1)
-                        && mouse.row > pane.y
-                        && mouse.row < pane.y + pane.height.saturating_sub(1)
+                    let pane = terminal_pane_inner(Rect::new(0, 0, size.width, size.height));
+                    if mouse.column >= pane.x
+                        && mouse.column < pane.x + pane.width
+                        && mouse.row >= pane.y
+                        && mouse.row < pane.y + pane.height
                     {
-                        write_mouse(&mut writer, mouse, x, y, mouse_mode)?;
+                        write_mouse(
+                            &mut writer,
+                            mouse,
+                            mouse.column - pane.x,
+                            mouse.row - pane.y,
+                            mouse_mode,
+                        )?;
                     }
                 }
                 _ => {}
             }
+        }
+        if child.try_wait().map_err(std::io::Error::other)?.is_some() {
+            break;
         }
     }
     stdout.execute(DisableMouseCapture)?;
     let _ = child.kill();
     fs::remove_file(config_path)?;
     Ok(())
-}
-
-fn write_mouse(
-    writer: &mut impl Write,
-    mouse: MouseEvent,
-    x: u16,
-    y: u16,
-    mode: vt100::MouseProtocolMode,
-) -> std::io::Result<()> {
-    let allowed = match mouse.kind {
-        MouseEventKind::Down(_)
-        | MouseEventKind::ScrollUp
-        | MouseEventKind::ScrollDown
-        | MouseEventKind::ScrollLeft
-        | MouseEventKind::ScrollRight => true,
-        MouseEventKind::Up(_) => matches!(
-            mode,
-            vt100::MouseProtocolMode::PressRelease
-                | vt100::MouseProtocolMode::ButtonMotion
-                | vt100::MouseProtocolMode::AnyMotion
-        ),
-        MouseEventKind::Drag(_) => matches!(
-            mode,
-            vt100::MouseProtocolMode::ButtonMotion | vt100::MouseProtocolMode::AnyMotion
-        ),
-        MouseEventKind::Moved => mode == vt100::MouseProtocolMode::AnyMotion,
-    };
-    if !allowed {
-        return Ok(());
-    }
-    let (button, release) = match mouse.kind {
-        MouseEventKind::Down(button) => (mouse_button(button), false),
-        MouseEventKind::Up(button) => (mouse_button(button), true),
-        MouseEventKind::Drag(button) => (mouse_button(button) | 32, false),
-        MouseEventKind::Moved => (35, false),
-        MouseEventKind::ScrollUp => (64, false),
-        MouseEventKind::ScrollDown => (65, false),
-        MouseEventKind::ScrollLeft => (66, false),
-        MouseEventKind::ScrollRight => (67, false),
-    };
-    let modifier = (u8::from(
-        mouse
-            .modifiers
-            .contains(crossterm::event::KeyModifiers::SHIFT),
-    ) * 4)
-        | (u8::from(
-            mouse
-                .modifiers
-                .contains(crossterm::event::KeyModifiers::ALT),
-        ) * 8)
-        | (u8::from(
-            mouse
-                .modifiers
-                .contains(crossterm::event::KeyModifiers::CONTROL),
-        ) * 16);
-    let code = button + modifier;
-    write!(
-        writer,
-        "\x1b[<{code};{};{}{}",
-        x + 1,
-        y + 1,
-        if release { 'm' } else { 'M' }
-    )
-}
-
-fn mouse_button(button: MouseButton) -> u8 {
-    match button {
-        MouseButton::Left => 0,
-        MouseButton::Middle => 1,
-        MouseButton::Right => 2,
-    }
 }
 
 fn render(
