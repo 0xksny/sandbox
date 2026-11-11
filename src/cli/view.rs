@@ -1,4 +1,5 @@
 use std::{
+    fs,
     io::{Read, Write},
     sync::{Arc, RwLock},
     time::Duration,
@@ -36,6 +37,20 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
 }
 
 fn run_app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
+    let config_path = std::env::temp_dir().join(format!("herdr-view-{}.toml", std::process::id()));
+    let config = toml::toml! {
+        onboarding = false
+
+        [ui]
+        sidebar_collapsed_mode = "hidden"
+        sidebar_start_collapsed = true
+    };
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&config_path)?
+        .write_all(config.to_string().as_bytes())?;
+
     let workspaces = Arc::new(RwLock::new(
         Herdr::new()
             .list_workspaces()
@@ -63,8 +78,9 @@ fn run_app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
             pixel_height: 0,
         })
         .map_err(std::io::Error::other)?;
-    let mut command = CommandBuilder::new_default_prog();
+    let mut command = CommandBuilder::new("herdr");
     command.cwd(std::env::current_dir()?);
+    command.env("HERDR_CONFIG_PATH", &config_path);
     let mut child = pty
         .slave
         .spawn_command(command)
@@ -184,6 +200,7 @@ fn run_app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
     }
     stdout.execute(DisableMouseCapture)?;
     let _ = child.kill();
+    fs::remove_file(config_path)?;
     Ok(())
 }
 
