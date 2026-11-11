@@ -275,7 +275,7 @@ fn run_app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
         }
     });
     let mut mouse_mode = vt100::MouseProtocolMode::None;
-    loop {
+    'app: loop {
         while let Ok(mode) = mode_rx.try_recv() {
             mouse_mode = mode;
             if mode == vt100::MouseProtocolMode::None {
@@ -286,66 +286,72 @@ fn run_app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
         }
         terminal.draw(|frame| render(frame, &parser, &workspaces))?;
         if crossterm::event::poll(Duration::from_millis(30))? {
-            match crossterm::event::read()? {
-                crossterm::event::Event::Key(key) if key.is_press() => {
-                    if key.code == KeyCode::Esc {
-                        break;
-                    }
-                    if let Some(bytes) = encode_key(key.code, key.modifiers) {
-                        writer.write_all(&bytes)?;
-                    }
+            // Process rapid sequential events (e.g. mouse scroll)
+            for _ in 0..256 {
+                if !crossterm::event::poll(Duration::ZERO)? {
+                    break;
                 }
-                crossterm::event::Event::Resize(cols, rows) => {
-                    let area = Rect::new(0, 0, cols, rows);
-                    let inner = terminal_pane(area);
-                    pty.master
-                        .resize(PtySize {
-                            rows: inner.height,
-                            cols: inner.width,
-                            pixel_width: 0,
-                            pixel_height: 0,
-                        })
-                        .map_err(std::io::Error::other)?;
-                    if let Ok(mut p) = parser.write() {
-                        p.screen_mut().set_size(inner.height, inner.width);
-                    }
-                }
-                crossterm::event::Event::Mouse(mouse) => {
-                    let size = terminal.size()?;
-                    let area = Rect::new(0, 0, size.width, size.height);
-                    let tasks_inner = tasks_pane_inner(area);
-                    if let MouseEventKind::Down(MouseButton::Left) = mouse.kind
-                        && contains(tasks_inner, mouse.column, mouse.row)
-                    {
-                        let index = (mouse.row - tasks_inner.y) as usize;
-                        let workspace_id = workspaces.read().ok().and_then(|items| {
-                            items
-                                .get(index)
-                                .map(|workspace| workspace.workspace_id.clone())
-                        });
-                        if let Some(workspace_id) = workspace_id {
-                            Herdr::new()
-                                .focus_workspace(&workspace_id)
-                                .map_err(std::io::Error::other)?;
-                            if let Ok(updated) = Herdr::new().list_workspaces()
-                                && let Ok(mut current) = workspaces.write()
-                            {
-                                *current = updated;
-                            }
+                match crossterm::event::read()? {
+                    crossterm::event::Event::Key(key) if key.is_press() => {
+                        if key.code == KeyCode::Esc {
+                            break 'app;
+                        }
+                        if let Some(bytes) = encode_key(key.code, key.modifiers) {
+                            writer.write_all(&bytes)?;
                         }
                     }
-                    let pane = terminal_pane_inner(Rect::new(0, 0, size.width, size.height));
-                    if contains(pane, mouse.column, mouse.row) {
-                        write_mouse(
-                            &mut writer,
-                            mouse,
-                            mouse.column - pane.x,
-                            mouse.row - pane.y,
-                            mouse_mode,
-                        )?;
+                    crossterm::event::Event::Resize(cols, rows) => {
+                        let area = Rect::new(0, 0, cols, rows);
+                        let inner = terminal_pane(area);
+                        pty.master
+                            .resize(PtySize {
+                                rows: inner.height,
+                                cols: inner.width,
+                                pixel_width: 0,
+                                pixel_height: 0,
+                            })
+                            .map_err(std::io::Error::other)?;
+                        if let Ok(mut p) = parser.write() {
+                            p.screen_mut().set_size(inner.height, inner.width);
+                        }
                     }
+                    crossterm::event::Event::Mouse(mouse) => {
+                        let size = terminal.size()?;
+                        let area = Rect::new(0, 0, size.width, size.height);
+                        let tasks_inner = tasks_pane_inner(area);
+                        if let MouseEventKind::Down(MouseButton::Left) = mouse.kind
+                            && contains(tasks_inner, mouse.column, mouse.row)
+                        {
+                            let index = (mouse.row - tasks_inner.y) as usize;
+                            let workspace_id = workspaces.read().ok().and_then(|items| {
+                                items
+                                    .get(index)
+                                    .map(|workspace| workspace.workspace_id.clone())
+                            });
+                            if let Some(workspace_id) = workspace_id {
+                                Herdr::new()
+                                    .focus_workspace(&workspace_id)
+                                    .map_err(std::io::Error::other)?;
+                                if let Ok(updated) = Herdr::new().list_workspaces()
+                                    && let Ok(mut current) = workspaces.write()
+                                {
+                                    *current = updated;
+                                }
+                            }
+                        }
+                        let pane = terminal_pane_inner(Rect::new(0, 0, size.width, size.height));
+                        if contains(pane, mouse.column, mouse.row) {
+                            write_mouse(
+                                &mut writer,
+                                mouse,
+                                mouse.column - pane.x,
+                                mouse.row - pane.y,
+                                mouse_mode,
+                            )?;
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         }
         if child.try_wait().map_err(std::io::Error::other)?.is_some() {
