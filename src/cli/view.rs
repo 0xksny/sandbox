@@ -84,6 +84,7 @@ fn contains(area: Rect, column: u16, row: u16) -> bool {
 
 fn encode_key(code: KeyCode, modifiers: KeyModifiers) -> Option<Vec<u8>> {
     let bytes = match code {
+        KeyCode::Esc => b"\x1b".to_vec(),
         KeyCode::Enter => b"\r".to_vec(),
         KeyCode::Backspace => b"\x7f".to_vec(),
         KeyCode::Tab => b"\t".to_vec(),
@@ -272,7 +273,7 @@ fn run_app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
         }
     });
     let mut mouse_mode = vt100::MouseProtocolMode::None;
-    'app: loop {
+    loop {
         while let Ok(mode) = mode_rx.try_recv() {
             mouse_mode = mode;
             if mode == vt100::MouseProtocolMode::None {
@@ -290,9 +291,6 @@ fn run_app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                 }
                 match crossterm::event::read()? {
                     crossterm::event::Event::Key(key) if key.is_press() => {
-                        if key.code == KeyCode::Esc {
-                            break 'app;
-                        }
                         if let Some(bytes) = encode_key(key.code, key.modifiers) {
                             writer.write_all(&bytes)?;
                         }
