@@ -19,11 +19,13 @@ use ratatui::layout::Rect;
 use ratatui::{
     DefaultTerminal, Frame,
     layout::{Constraint, Direction, Layout},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
     widgets::{Block, BorderType, Borders, Paragraph},
 };
 use tui_term::{vt100, widget::PseudoTerminal};
 
-use crate::herdr::Herdr;
+use crate::herdr::{Herdr, Workspace};
 
 #[derive(Args, Clone, Debug, PartialEq)]
 pub struct ViewCommand {}
@@ -39,21 +41,48 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
     run_app(terminal)
 }
 
-fn terminal_pane(area: Rect) -> Rect {
+fn panes(area: Rect) -> [Rect; 2] {
     Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(30), Constraint::Fill(1)])
-        .split(area)[1]
+        .split(area)
+        .iter()
+        .copied()
+        .collect::<Vec<_>>()
+        .try_into()
+        .expect("two pane constraints produce two panes")
 }
 
-fn terminal_pane_inner(area: Rect) -> Rect {
-    let pane = terminal_pane(area);
+fn tasks_pane(area: Rect) -> Rect {
+    panes(area)[0]
+}
+
+fn terminal_pane(area: Rect) -> Rect {
+    panes(area)[1]
+}
+
+fn pane_inner(pane: Rect) -> Rect {
     Rect::new(
         pane.x + 1,
         pane.y + 1,
         pane.width.saturating_sub(2),
         pane.height.saturating_sub(2),
     )
+}
+
+fn tasks_pane_inner(area: Rect) -> Rect {
+    pane_inner(tasks_pane(area))
+}
+
+fn terminal_pane_inner(area: Rect) -> Rect {
+    pane_inner(terminal_pane(area))
+}
+
+fn contains(area: Rect, column: u16, row: u16) -> bool {
+    column >= area.x
+        && column < area.x + area.width
+        && row >= area.y
+        && row < area.y + area.height
 }
 
 fn encode_key(code: KeyCode, modifiers: KeyModifiers) -> Option<Vec<u8>> {
@@ -283,12 +312,30 @@ fn run_app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
                 }
                 crossterm::event::Event::Mouse(mouse) => {
                     let size = terminal.size()?;
-                    let pane = terminal_pane_inner(Rect::new(0, 0, size.width, size.height));
-                    if mouse.column >= pane.x
-                        && mouse.column < pane.x + pane.width
-                        && mouse.row >= pane.y
-                        && mouse.row < pane.y + pane.height
+                    let area = Rect::new(0, 0, size.width, size.height);
+                    let tasks_inner = tasks_pane_inner(area);
+                    if let MouseEventKind::Down(MouseButton::Left) = mouse.kind
+                        && contains(tasks_inner, mouse.column, mouse.row)
                     {
+                        let index = (mouse.row - tasks_inner.y) as usize;
+                        let workspace_id = workspaces.read().ok().and_then(|items| {
+                            items
+                                .get(index)
+                                .map(|workspace| workspace.workspace_id.clone())
+                        });
+                        if let Some(workspace_id) = workspace_id {
+                            Herdr::new()
+                                .focus_workspace(&workspace_id)
+                                .map_err(std::io::Error::other)?;
+                            if let Ok(updated) = Herdr::new().list_workspaces()
+                                && let Ok(mut current) = workspaces.write()
+                            {
+                                *current = updated;
+                            }
+                        }
+                    }
+                    let pane = terminal_pane_inner(Rect::new(0, 0, size.width, size.height));
+                    if contains(pane, mouse.column, mouse.row) {
                         write_mouse(
                             &mut writer,
                             mouse,
@@ -314,12 +361,9 @@ fn run_app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
 fn render(
     frame: &mut Frame,
     parser: &Arc<RwLock<vt100::Parser>>,
-    workspaces: &Arc<RwLock<Vec<String>>>,
+    workspaces: &Arc<RwLock<Vec<Workspace>>>,
 ) {
-    let layout = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(30), Constraint::Fill(1)])
-        .split(frame.area());
+    let layout = panes(frame.area());
 
     let block_tasks = Block::new()
         .borders(Borders::ALL)
@@ -338,12 +382,18 @@ fn render(
     if let Ok(workspaces) = workspaces.read() {
         let workspace_lines = workspaces
             .iter()
-            .map(|workspace| format!("• {workspace}"))
+            .map(|workspace| {
+                let style = if workspace.focused {
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+                Line::from(Span::styled(format!("• {}", workspace.label), style))
+            })
             .collect::<Vec<_>>();
-        frame.render_widget(
-            Paragraph::new(workspace_lines.join("\n")),
-            block_tasks_inner,
-        );
+        frame.render_widget(Paragraph::new(workspace_lines), block_tasks_inner);
     }
 
     let block_terminal_inner = block_terminal.inner(layout[1]);

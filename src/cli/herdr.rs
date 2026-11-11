@@ -30,7 +30,7 @@ struct HerdrListCommand {}
 impl HerdrListCommand {
     fn run(self, herdr: Herdr) -> Result<()> {
         for workspace in herdr.list_workspaces()? {
-            println!("{}", workspace);
+            println!("{}", workspace.label);
         }
 
         Ok(())

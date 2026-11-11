@@ -10,9 +10,11 @@ use serde_json::{Value, json};
 
 pub struct Herdr {}
 
-#[derive(Debug, Deserialize)]
-struct Workspace {
-    label: String,
+#[derive(Clone, Debug, Deserialize)]
+pub struct Workspace {
+    pub workspace_id: String,
+    pub label: String,
+    pub focused: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -25,7 +27,7 @@ struct WorkspaceListResult {
 #[derive(Debug, Deserialize)]
 struct Response {
     id: String,
-    result: Option<WorkspaceListResult>,
+    result: Option<Value>,
     error: Option<ErrorResponse>,
 }
 
@@ -40,7 +42,7 @@ impl Herdr {
         Herdr {}
     }
 
-    fn send(self, request: Value) -> Result<Response> {
+    fn send(&self, request: Value) -> Result<Response> {
         let socket_path = socket_path()?;
         let mut stream = UnixStream::connect(&socket_path).context(format!(
             "error connecting to herdr socket {}",
@@ -62,19 +64,10 @@ impl Herdr {
         serde_json::from_str(&response_line).context("error parsing herdr response")
     }
 
-    pub fn list_workspaces(self) -> Result<Vec<String>> {
-        let request = json!({
-            "id": "sandbox-list-workspaces",
-            "method": "workspace.list",
-            "params": {}
-        });
-
-        let response = self.send(request).context("error sending request")?;
-
-        if response.id != "sandbox-list-workspaces" {
+    fn check_response(response: Response, request_id: &str) -> Result<Value> {
+        if response.id != request_id {
             return Err(anyhow!("herdr response has unexpected request id"));
         }
-
         if let Some(error) = response.error {
             return Err(anyhow!(
                 "herdr API error ({}): {}",
@@ -82,10 +75,22 @@ impl Herdr {
                 error.message
             ));
         }
-
-        let result = response
+        response
             .result
-            .context("herdr response did not contain a result")?;
+            .context("herdr response did not contain a result")
+    }
+
+    pub fn list_workspaces(&self) -> Result<Vec<Workspace>> {
+        let request = json!({
+            "id": "sandbox-list-workspaces",
+            "method": "workspace.list",
+            "params": {}
+        });
+
+        let response = self.send(request).context("error sending request")?;
+        let result: WorkspaceListResult =
+            serde_json::from_value(Self::check_response(response, "sandbox-list-workspaces")?)
+                .context("error parsing workspace list result")?;
 
         if result.result_type != "workspace_list" {
             return Err(anyhow!(
@@ -94,11 +99,22 @@ impl Herdr {
             ));
         }
 
-        Ok(result
-            .workspaces
-            .into_iter()
-            .map(|workspace| workspace.label)
-            .collect())
+        Ok(result.workspaces)
+    }
+
+    pub fn focus_workspace(&self, workspace_id: &str) -> Result<()> {
+        let request_id = "sandbox-focus-workspace";
+        let response = self
+            .send(json!({
+                "id": request_id,
+                "method": "workspace.focus",
+                "params": {
+                    "workspace_id": workspace_id
+                }
+            }))
+            .context("error sending workspace focus request")?;
+        Self::check_response(response, request_id)?;
+        Ok(())
     }
 }
 
