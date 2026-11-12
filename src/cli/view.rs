@@ -42,6 +42,7 @@ fn app(terminal: &mut DefaultTerminal) -> std::io::Result<()> {
 }
 
 fn panes(area: Rect) -> [Rect; 2] {
+    #[allow(clippy::expect_used)]
     Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(30), Constraint::Fill(1)])

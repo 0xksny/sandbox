@@ -8,6 +8,7 @@ use clap::{Parser, Subcommand};
 
 use crate::config::Config;
 
+mod app;
 mod attach;
 mod create;
 mod delete;
@@ -17,6 +18,7 @@ mod list;
 mod open;
 mod view;
 
+pub use app::AppCommand;
 pub use attach::AttachCommand;
 pub use create::CreateCommand;
 pub use delete::DeleteCommand;
@@ -53,6 +55,7 @@ impl Cli {
         let config = Cli::load_config(&sandbox_dir).context("error loading configuration")?;
 
         match self.command {
+            Commands::App(command) => command.run(),
             Commands::Attach(command) => command.run(sandbox_dir, config),
             Commands::Create(command) => command.run(sandbox_dir, config),
             Commands::Delete(command) => command.run(sandbox_dir),
@@ -86,6 +89,8 @@ impl Cli {
 
 #[derive(Clone, Debug, PartialEq, Subcommand)]
 pub enum Commands {
+    /// Open the app.
+    App(AppCommand),
     /// Attach to a sandbox.
     Attach(AttachCommand),
     /// Create a sandbox.

@@ -8,6 +8,7 @@ anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 crossterm = "0.29.0"
 dirs = "6"
+gpui-kit = "0.9.1"
 include_dir = "0.7"
 lipsum = "0.9.1"
 petname = "3"
