@@ -1,4 +1,5 @@
 use gpui_kit::*;
+
 use crate::app::component::chat::Chat;
 use crate::app::component::sidebar::Sidebar;
 

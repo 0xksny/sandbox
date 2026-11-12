@@ -1,5 +1,5 @@
-use gpui_kit::*;
 use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::*;
 
 use crate::herdr::{Herdr, Workspace};
 
@@ -29,7 +29,11 @@ impl Render for Sidebar {
                         .flex()
                         .flex_col()
                         .gap_1()
-                        .child(div().font_weight(FontWeight::SEMIBOLD).child(workspace.label.clone()))
+                        .child(
+                            div()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child(workspace.label.clone()),
+                        )
                         .child(div().text_sm().child("Created 2 hours ago")),
                 )
                 .child(
